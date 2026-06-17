@@ -5,6 +5,11 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.tsx'
 import './index.css'
+import { installCorsProxy } from './lib/cors-fetch'
+
+// web 开发模式下全局拦截跨域 fetch，经 Vite /__api_proxy 转发以绕过 CORS。
+// 必须在任何网络请求（含 store 初始化）之前安装。
+installCorsProxy()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

@@ -68,6 +68,14 @@ function apiCorsProxyPlugin(): Plugin {
             } catch { /* ignore parse errors */ }
           }
 
+          // 若原始头未携带 Content-Type（如 FormData 由浏览器自动生成
+          // multipart 边界），回退使用进入代理请求的 Content-Type，
+          // 否则 multipart 边界丢失会导致上游解析失败。
+          const hasCt = Object.keys(forwardHeaders).some((k) => k.toLowerCase() === 'content-type');
+          if (!hasCt && typeof req.headers['content-type'] === 'string') {
+            forwardHeaders['Content-Type'] = req.headers['content-type'];
+          }
+
           // 服务端转发请求
           const response = await fetch(urlParam, {
             method: req.method || 'GET',

@@ -16,6 +16,7 @@ import {
 } from '@/lib/ai/feature-router';
 import { resolveImageApiFormat } from '@/lib/api-key-manager';
 import { uploadBase64Image } from '@/lib/utils/image-upload';
+import { corsFetch } from '@/lib/cors-fetch';
 import { isVeoModel, resolveVeoUploadCapability } from '@/lib/freedom/veo-capability';
 import { type AIFeature, useAPIConfigStore } from '@/stores/api-config-store';
 import { useMediaStore } from '@/stores/media-store';
@@ -405,7 +406,7 @@ async function generateViaChatCompletions(
 
   console.log('[Freedom] Submitting via chat completions:', { model, endpoint });
 
-  const response = await fetch(endpoint, {
+  const response = await corsFetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -494,7 +495,7 @@ async function generateViaImagesEndpoint(
   const imagePaths = getImageEndpointPaths(endpointTypes || []);
   const rootBase = getRootBaseUrl(baseUrl);
   const submitUrl = `${rootBase}${imagePaths.submit}`;
-  const response = await fetch(submitUrl, {
+  const response = await corsFetch(submitUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -564,7 +565,7 @@ async function generateViaKlingImagesEndpoint(
 
   let response: Response;
   try {
-    response = await fetch(`${rootBase}/${nativePath}`, {
+    response = await corsFetch(`${rootBase}/${nativePath}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
       body: JSON.stringify(body),
@@ -651,7 +652,7 @@ async function generateViaMidjourneyEndpoint(
     requestBody.base64Array = extra.base64Array;
   }
 
-  const submitResp = await fetch(submitUrl, {
+  const submitResp = await corsFetch(submitUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -674,7 +675,7 @@ async function generateViaMidjourneyEndpoint(
   const pollUrl = `${rootBase}/mj/task/${taskId}/fetch`;
   for (let i = 0; i < IMAGE_POLL_MAX_ATTEMPTS; i++) {
     await new Promise((r) => setTimeout(r, 2500));
-    const pollResp = await fetch(pollUrl, {
+    const pollResp = await corsFetch(pollUrl, {
       headers: { 'Authorization': `Bearer ${apiKey}` },
     });
     if (!pollResp.ok) continue;
@@ -755,7 +756,7 @@ async function generateViaIdeogramEndpoint(
   }
   if (typeof extra.num_images === 'number') form.append('num_images', String(extra.num_images));
 
-  const response = await fetch(endpoint, {
+  const response = await corsFetch(endpoint, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
@@ -796,7 +797,7 @@ async function generateViaReplicateImageEndpoint(
   if (params.negativePrompt) input.negative_prompt = params.negativePrompt;
   if (params.extraParams) Object.assign(input, params.extraParams);
 
-  const submitResp = await fetch(submitUrl, {
+  const submitResp = await corsFetch(submitUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({ model, input }),
@@ -818,7 +819,7 @@ async function generateViaReplicateImageEndpoint(
   const pollUrl = `${rootBase}/replicate/v1/predictions/${predictionId}`;
   for (let i = 0; i < IMAGE_POLL_MAX_ATTEMPTS; i++) {
     await new Promise(r => setTimeout(r, IMAGE_POLL_INTERVAL));
-    const pollResp = await fetch(pollUrl, {
+    const pollResp = await corsFetch(pollUrl, {
       headers: { 'Authorization': `Bearer ${apiKey}` },
     });
     if (!pollResp.ok) continue;
@@ -1031,7 +1032,7 @@ function dataUrlToBlob(dataUrl: string, mimeHint?: string): Blob {
 
 async function toUploadBlob(file: FreedomVideoUploadFile): Promise<Blob> {
   if (/^https?:\/\//i.test(file.dataUrl)) {
-    const resp = await fetch(file.dataUrl);
+    const resp = await corsFetch(file.dataUrl);
     if (!resp.ok) throw new Error(`无法下载上传素材：${resp.status}`);
     return resp.blob();
   }
@@ -1122,7 +1123,7 @@ async function generateVideoViaOpenAIOfficial(
     await appendVeoMultipartReferences(form, model, endpointTypes, params.uploadFiles);
   }
 
-  const submitResp = await fetch(endpoint, {
+  const submitResp = await corsFetch(endpoint, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${apiKey}` },
     body: form,
@@ -1140,7 +1141,7 @@ async function generateVideoViaOpenAIOfficial(
   const pollUrl = buildEndpoint(baseUrl, `videos/${taskId}`);
   for (let i = 0; i < VIDEO_POLL_MAX_ATTEMPTS; i++) {
     await new Promise((r) => setTimeout(r, VIDEO_POLL_INTERVAL));
-    const pollResp = await fetch(pollUrl, {
+    const pollResp = await corsFetch(pollUrl, {
       headers: { 'Authorization': `Bearer ${apiKey}` },
     });
     if (!pollResp.ok) continue;
@@ -1230,7 +1231,7 @@ async function generateVideoViaUnified(
   const rootBase = getRootBaseUrl(baseUrl);
   const submitUrl = `${rootBase}${endpointPaths.submit}`;
 
-  const resp = await fetch(submitUrl, {
+  const resp = await corsFetch(submitUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1265,7 +1266,7 @@ async function generateVideoViaUnified(
 
   for (let i = 0; i < VIDEO_POLL_MAX_ATTEMPTS; i++) {
     await new Promise((r) => setTimeout(r, VIDEO_POLL_INTERVAL));
-    const pollResp = await fetch(pollUrl, {
+    const pollResp = await corsFetch(pollUrl, {
       headers: { 'Authorization': `Bearer ${apiKey}` },
     });
     if (!pollResp.ok) continue;
@@ -1313,7 +1314,7 @@ async function generateVideoViaVolc(
 
   const body = { model, content };
 
-  const submitResp = await fetch(`${rootBase}/volc/v1/contents/generations/tasks`, {
+  const submitResp = await corsFetch(`${rootBase}/volc/v1/contents/generations/tasks`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1332,7 +1333,7 @@ async function generateVideoViaVolc(
   const pollUrl = `${rootBase}/volc/v1/contents/generations/tasks/${taskId}`;
   for (let i = 0; i < VIDEO_POLL_MAX_ATTEMPTS; i++) {
     await new Promise((r) => setTimeout(r, VIDEO_POLL_INTERVAL));
-    const pollResp = await fetch(pollUrl, {
+    const pollResp = await corsFetch(pollUrl, {
       headers: { 'Authorization': `Bearer ${apiKey}` },
     });
     if (!pollResp.ok) continue;
@@ -1369,7 +1370,7 @@ async function generateVideoViaWan(
   };
   if (params.duration) body.parameters.duration = Math.max(3, params.duration);
 
-  const submitResp = await fetch(
+  const submitResp = await corsFetch(
     `${rootBase}/alibailian/api/v1/services/aigc/video-generation/video-synthesis`,
     {
       method: 'POST',
@@ -1391,7 +1392,7 @@ async function generateVideoViaWan(
   const pollUrl = `${rootBase}/alibailian/api/v1/tasks/${taskId}`;
   for (let i = 0; i < VIDEO_POLL_MAX_ATTEMPTS; i++) {
     await new Promise((r) => setTimeout(r, VIDEO_POLL_INTERVAL));
-    const pollResp = await fetch(pollUrl, {
+    const pollResp = await corsFetch(pollUrl, {
       headers: { 'Authorization': `Bearer ${apiKey}` },
     });
     if (!pollResp.ok) continue;
@@ -1461,7 +1462,7 @@ async function generateVideoViaKling(
   }
 
   const submitUrl = `${rootBase}/kling/v1/videos/${endpointPath}`;
-  const submitResp = await fetch(submitUrl, {
+  const submitResp = await corsFetch(submitUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1481,7 +1482,7 @@ async function generateVideoViaKling(
   const pollUrl = `${rootBase}/kling/v1/videos/${endpointPath}/${taskId}`;
   for (let i = 0; i < VIDEO_POLL_MAX_ATTEMPTS; i++) {
     await new Promise((r) => setTimeout(r, VIDEO_POLL_INTERVAL));
-    const pollResp = await fetch(pollUrl, {
+    const pollResp = await corsFetch(pollUrl, {
       headers: { 'Authorization': `Bearer ${apiKey}` },
     });
     if (!pollResp.ok) continue;
@@ -1528,7 +1529,7 @@ async function generateVideoViaReplicate(
   if (primaryFile) input.image = await toUploadHttpUrl(primaryFile);
   if (grouped.last) input.tail_image = await toUploadHttpUrl(grouped.last);
 
-  const submitResp = await fetch(submitUrl, {
+  const submitResp = await corsFetch(submitUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({ model, input }),
@@ -1547,7 +1548,7 @@ async function generateVideoViaReplicate(
   const pollUrl = `${rootBase}/replicate/v1/predictions/${predictionId}`;
   for (let i = 0; i < VIDEO_POLL_MAX_ATTEMPTS; i++) {
     await new Promise(r => setTimeout(r, VIDEO_POLL_INTERVAL));
-    const pollResp = await fetch(pollUrl, {
+    const pollResp = await corsFetch(pollUrl, {
       headers: { 'Authorization': `Bearer ${apiKey}` },
     });
     if (!pollResp.ok) continue;
@@ -1610,7 +1611,7 @@ async function pollForResult(
     await new Promise(resolve => setTimeout(resolve, interval));
 
     try {
-      const response = await fetch(pollUrl, {
+      const response = await corsFetch(pollUrl, {
         headers: { 'Authorization': `Bearer ${apiKey}` },
       });
 
