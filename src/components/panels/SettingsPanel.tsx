@@ -9,7 +9,7 @@
  * Based on AionUi's ModelModalContent pattern
  */
 
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import {
   isVisibleImageHostProvider,
   useAPIConfigStore,
@@ -110,6 +110,8 @@ export function SettingsPanel() {
     syncProviderModels,
     setFeatureBindings,
     getFeatureBindings,
+    exportConfig,
+    importConfig,
   } = useAPIConfigStore();
   const {
     resourceSharing,
@@ -128,6 +130,8 @@ export function SettingsPanel() {
 
   const [expandedProviders, setExpandedProviders] = useState<Record<string, boolean>>({});
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [pendingImportText, setPendingImportText] = useState<string | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<IProvider | null>(null);
   const [testingProvider, setTestingProvider] = useState<string | null>(null);
@@ -147,6 +151,57 @@ export function SettingsPanel() {
   const visibleImageHostProviders = useMemo(
     () => imageHostProviders.filter(isVisibleImageHostProvider),
     [imageHostProviders],
+  );
+
+  // ====== 配置导出 / 导入（跨环境迁移：Electron <-> 浏览器）======
+  const importFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleExportConfig = useCallback(() => {
+    try {
+      const json = exportConfig();
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      a.href = url;
+      a.download = `moyin-api-config-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success("配置已导出");
+    } catch (e) {
+      toast.error("导出失败：" + (e instanceof Error ? e.message : String(e)));
+    }
+  }, [exportConfig]);
+
+  const handleImportFile = useCallback(async (file: File) => {
+    try {
+      const text = await file.text();
+      setPendingImportText(text);
+      setImportDialogOpen(true);
+    } catch (e) {
+      toast.error("读取文件失败：" + (e instanceof Error ? e.message : String(e)));
+    }
+  }, []);
+
+  const handleConfirmImport = useCallback(
+    (mode: "merge" | "replace") => {
+      if (!pendingImportText) return;
+      const result = importConfig(pendingImportText, mode);
+      if (result.success) {
+        toast.success(
+          mode === "replace"
+            ? `配置已替换：${result.providerCount ?? 0} 个供应商、${result.imageHostCount ?? 0} 个图床`
+            : `配置已合并：新增 ${result.providerCount ?? 0} 个供应商、${result.imageHostCount ?? 0} 个图床（重复项自动跳过）`,
+        );
+      } else {
+        toast.error("导入失败：" + (result.error || "未知错误"));
+      }
+      setImportDialogOpen(false);
+      setPendingImportText(null);
+    },
+    [importConfig, pendingImportText],
   );
 
   // ====== Memefast 默认绑定自动补全 ======
@@ -647,6 +702,25 @@ export function SettingsPanel() {
             <span className="text-xs text-muted-foreground font-mono bg-muted border border-border px-2 py-1 rounded">
               已配置: {configuredCount}/{providers.length}
             </span>
+            <input
+              ref={importFileInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void handleImportFile(file);
+                e.target.value = "";
+              }}
+            />
+            <Button onClick={handleExportConfig} size="sm" variant="outline" title="将供应商、API Key、服务映射、图床配置导出为 JSON 文件">
+              <Download className="h-4 w-4 mr-1" />
+              导出配置
+            </Button>
+            <Button onClick={() => importFileInputRef.current?.click()} size="sm" variant="outline" title="从 JSON 文件导入配置（合并模式，重复项自动跳过）">
+              <Upload className="h-4 w-4 mr-1" />
+              导入配置
+            </Button>
             <Button onClick={() => setAddDialogOpen(true)} size="sm">
               <Plus className="h-4 w-4 mr-1" />
               添加供应商
@@ -1739,6 +1813,45 @@ export function SettingsPanel() {
           setAvailableUpdate(null);
         }}
       />
+
+      <AlertDialog
+        open={importDialogOpen}
+        onOpenChange={(open) => {
+          setImportDialogOpen(open);
+          if (!open) setPendingImportText(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>导入配置</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>请选择导入方式：</p>
+                <p>
+                  <span className="font-medium text-foreground">合并</span>
+                  ：保留当前配置，仅追加文件中的新供应商与图床（按 平台 + 地址 去重，重复项自动跳过）。推荐。
+                </p>
+                <p>
+                  <span className="font-medium text-foreground">替换</span>
+                  ：用文件内容<strong>完全覆盖</strong>当前所有供应商、API Key、服务映射与图床配置。此操作不可撤销。
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-2">
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <Button variant="outline" onClick={() => handleConfirmImport("merge")}>
+              合并（推荐）
+            </Button>
+            <AlertDialogAction
+              onClick={() => handleConfirmImport("replace")}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              替换
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

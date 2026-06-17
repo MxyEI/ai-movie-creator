@@ -465,6 +465,10 @@ interface APIConfigActions {
   // Model limits discovery
   getDiscoveredModelLimits: (model: string) => DiscoveredModelLimits | undefined;
   setDiscoveredModelLimits: (model: string, limits: Partial<DiscoveredModelLimits>) => void;
+
+  // Config export / import (cross-environment migration: Electron <-> browser)
+  exportConfig: () => string;
+  importConfig: (json: string, mode?: 'merge' | 'replace') => { success: boolean; error?: string; providerCount?: number; imageHostCount?: number };
 }
 
 type APIConfigStore = APIConfigState & APIConfigActions;
@@ -1126,6 +1130,109 @@ export const useAPIConfigStore = create<APIConfigStore>()(
           },
         }));
         console.log(`[APIConfig] Discovered model limits for ${model}:`, limits);
+      },
+
+      // ==================== Config export / import ====================
+
+      exportConfig: () => {
+        const state = get();
+        const payload = {
+          _type: 'moyin-api-config',
+          _version: 13,
+          _exportedAt: new Date().toISOString(),
+          providers: state.providers,
+          featureBindings: state.featureBindings,
+          apiKeys: state.apiKeys,
+          concurrency: state.concurrency,
+          aspectRatio: state.aspectRatio,
+          orientation: state.orientation,
+          advancedOptions: state.advancedOptions,
+          imageHostProviders: state.imageHostProviders,
+          modelEndpointTypes: state.modelEndpointTypes,
+          modelTypes: state.modelTypes,
+          modelTags: state.modelTags,
+          modelEnableGroups: state.modelEnableGroups,
+          discoveredModelLimits: state.discoveredModelLimits,
+        };
+        return JSON.stringify(payload, null, 2);
+      },
+
+      importConfig: (json, mode = 'merge') => {
+        let parsed: Record<string, unknown>;
+        try {
+          parsed = JSON.parse(json);
+        } catch {
+          return { success: false, error: 'JSON 解析失败，文件格式无效' };
+        }
+        if (!parsed || typeof parsed !== 'object') {
+          return { success: false, error: '配置内容无效' };
+        }
+
+        const incomingProviders = Array.isArray(parsed.providers) ? (parsed.providers as IProvider[]) : [];
+        const incomingImageHosts = Array.isArray(parsed.imageHostProviders)
+          ? normalizeImageHostProviders(parsed.imageHostProviders as ImageHostProvider[])
+          : [];
+        if (incomingProviders.length === 0 && incomingImageHosts.length === 0) {
+          return { success: false, error: '配置中未找到任何供应商或图床' };
+        }
+
+        set((state) => {
+          if (mode === 'replace') {
+            return {
+              providers: incomingProviders,
+              imageHostProviders: incomingImageHosts.length > 0 ? incomingImageHosts : state.imageHostProviders,
+              featureBindings: (parsed.featureBindings as FeatureBindings) ?? state.featureBindings,
+              apiKeys: (parsed.apiKeys as APIConfigState['apiKeys']) ?? state.apiKeys,
+              concurrency: typeof parsed.concurrency === 'number' ? parsed.concurrency : state.concurrency,
+              aspectRatio: (parsed.aspectRatio as APIConfigState['aspectRatio']) ?? state.aspectRatio,
+              orientation: (parsed.orientation as APIConfigState['orientation']) ?? state.orientation,
+              advancedOptions: (parsed.advancedOptions as AdvancedGenerationOptions) ?? state.advancedOptions,
+              modelEndpointTypes: (parsed.modelEndpointTypes as Record<string, string[]>) ?? state.modelEndpointTypes,
+              modelTypes: (parsed.modelTypes as Record<string, string>) ?? state.modelTypes,
+              modelTags: (parsed.modelTags as Record<string, string[]>) ?? state.modelTags,
+              modelEnableGroups: (parsed.modelEnableGroups as Record<string, string[]>) ?? state.modelEnableGroups,
+              discoveredModelLimits: (parsed.discoveredModelLimits as Record<string, DiscoveredModelLimits>) ?? state.discoveredModelLimits,
+            };
+          }
+          // merge mode: dedupe by id, then by platform+baseUrl
+          const dedupeMerge = <T extends { id: string; platform: string; baseUrl?: string }>(existing: T[], incoming: T[]): T[] => {
+            const byId = new Set(existing.map((p) => p.id));
+            const byKey = new Set(existing.map((p) => `${p.platform}|${(p.baseUrl || '').replace(/\/+$/, '')}`));
+            const merged = [...existing];
+            for (const p of incoming) {
+              const key = `${p.platform}|${(p.baseUrl || '').replace(/\/+$/, '')}`;
+              if (byId.has(p.id) || byKey.has(key)) continue;
+              merged.push(p);
+              byId.add(p.id);
+              byKey.add(key);
+            }
+            return merged;
+          };
+          const incomingBindings = (parsed.featureBindings as FeatureBindings) ?? {} as FeatureBindings;
+          const mergedBindings: FeatureBindings = { ...state.featureBindings };
+          for (const [feature, bindings] of Object.entries(incomingBindings)) {
+            const key = feature as AIFeature;
+            if (!mergedBindings[key] || mergedBindings[key]?.length === 0) {
+              mergedBindings[key] = bindings ?? null;
+            }
+          }
+          return {
+            providers: dedupeMerge(state.providers, incomingProviders),
+            imageHostProviders: dedupeMerge(state.imageHostProviders, incomingImageHosts),
+            featureBindings: mergedBindings,
+            modelEndpointTypes: { ...(parsed.modelEndpointTypes as Record<string, string[]> ?? {}), ...state.modelEndpointTypes },
+            modelTypes: { ...(parsed.modelTypes as Record<string, string> ?? {}), ...state.modelTypes },
+            modelTags: { ...(parsed.modelTags as Record<string, string[]> ?? {}), ...state.modelTags },
+            modelEnableGroups: { ...(parsed.modelEnableGroups as Record<string, string[]> ?? {}), ...state.modelEnableGroups },
+            discoveredModelLimits: { ...(parsed.discoveredModelLimits as Record<string, DiscoveredModelLimits> ?? {}), ...state.discoveredModelLimits },
+          };
+        });
+
+        return {
+          success: true,
+          providerCount: incomingProviders.length,
+          imageHostCount: incomingImageHosts.length,
+        };
       },
     }),
     {
