@@ -64,8 +64,12 @@ export interface GenerationResult {
 
 const IMAGE_POLL_INTERVAL = 2000;
 const IMAGE_POLL_MAX_ATTEMPTS = 60;
-const VIDEO_POLL_INTERVAL = 2000;
-const VIDEO_POLL_MAX_ATTEMPTS = 120;
+// 视频轮询：5s × 180 = 15 分钟，与 Director 面板（use-video-generation.ts）保持一致。
+// 1080p 的 seedance/sora 等任务常超过 4 分钟，旧值（2s × 120 = 4 分钟）会误报超时。
+const VIDEO_POLL_INTERVAL = 5000;
+const VIDEO_POLL_MAX_ATTEMPTS = 180;
+// 轮询时连续请求失败（非 200）的容忍上限：超过则快速失败，避免端点已挂仍空转 15 分钟。
+const VIDEO_POLL_MAX_CONSECUTIVE_FAILURES = 10;
 
 // Retry config
 const RETRY_MAX_ATTEMPTS = 3;
@@ -1264,16 +1268,32 @@ async function generateVideoViaUnified(
   // 轮询：直接使用端点类型对应的 URL
   const pollUrl = `${rootBase}${endpointPaths.poll(String(taskId))}`;
 
+  let consecutiveFailures = 0;
   for (let i = 0; i < VIDEO_POLL_MAX_ATTEMPTS; i++) {
     await new Promise((r) => setTimeout(r, VIDEO_POLL_INTERVAL));
     const pollResp = await corsFetch(pollUrl, {
       headers: { 'Authorization': `Bearer ${apiKey}` },
     });
-    if (!pollResp.ok) continue;
+    if (!pollResp.ok) {
+      if (++consecutiveFailures >= VIDEO_POLL_MAX_CONSECUTIVE_FAILURES) {
+        throw toHttpError('视频轮询连续失败，已中止', pollResp.status, await pollResp.text().catch(() => ''));
+      }
+      continue;
+    }
+    consecutiveFailures = 0;
     const pollData = await pollResp.json();
-    const status = String(pollData.status || pollData.state || pollData.data?.status || '').toLowerCase();
+    // 状态从外层 + 内层（data / data.data）一起解析，兼容双层包装响应
+    const status = String(
+      pollData.status || pollData.state ||
+      pollData.data?.status || pollData.data?.data?.status || ''
+    ).toLowerCase();
+    // 进度可见性：外层 progress("85%") 或内层 progress(85)
+    const progress = pollData.progress ?? pollData.data?.progress ?? pollData.data?.data?.progress;
+    if (progress !== undefined) {
+      console.log(`[Freedom] Video poll ${i + 1}/${VIDEO_POLL_MAX_ATTEMPTS}, status: ${status}, progress: ${progress}`);
+    }
     if (status === 'completed' || status === 'succeeded' || status === 'success') {
-      const videoUrl = extractVideoUrl(pollData);
+      const videoUrl = extractNestedVideoUrl(pollData);
       if (videoUrl) return { url: videoUrl, taskId: String(taskId) };
     }
     if (status === 'failed' || status === 'error' || status === 'cancelled') {
@@ -1599,6 +1619,20 @@ function extractVideoUrl(data: any): string | null {
   if (data.video_url) return data.video_url;
   if (data.response?.url) return data.response.url;  // doubao, jimeng, grok, wan2.6
   return null;
+}
+
+/**
+ * 嵌套感知的视频 URL 提取：在浅层基础上再向下探测 data.data / data.data.data 两层。
+ * 用于部分第三方供应商（如 silkroadai）的双层包装响应：
+ *   { code, data: { status, data: { status, video_url } } }
+ * 仅应在轮询「终态」时调用，避免取到任务进行中（如 85%）暴露的临时 URL。
+ */
+function extractNestedVideoUrl(data: any): string | null {
+  return (
+    extractVideoUrl(data) ||
+    (data?.data ? extractVideoUrl(data.data) : null) ||
+    (data?.data?.data ? extractVideoUrl(data.data.data) : null)
+  );
 }
 
 async function pollForResult(

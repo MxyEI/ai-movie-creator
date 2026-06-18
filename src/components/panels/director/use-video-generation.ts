@@ -531,6 +531,20 @@ function extractVideoUrl(data: Record<string, any>): string | null {
   return (url ? normalizeUrl(url) : undefined) ?? null;
 }
 
+/**
+ * 嵌套感知的视频 URL 提取：在浅层基础上再向下探测 data.data / data.data.data 两层。
+ * 兼容部分第三方供应商（如 silkroadai）的双层包装响应：
+ *   { code, data: { status, data: { status, video_url } } }
+ * 仅应在轮询「终态」时调用，避免取到任务进行中暴露的临时 URL。
+ */
+function extractNestedVideoUrl(data: Record<string, any>): string | null {
+  return (
+    extractVideoUrl(data) ||
+    (data?.data ? extractVideoUrl(data.data) : null) ||
+    (data?.data?.data ? extractVideoUrl(data.data.data) : null)
+  );
+}
+
 async function callUnifiedVideoApi(
   apiKey: string,
   prompt: string,
@@ -666,10 +680,10 @@ async function callUnifiedVideoApi(
     const statusData = await statusResponse.json();
     console.log(`[VideoGen] Unified task ${taskId} status:`, statusData);
 
-    const status = String(statusData.status || statusData.state || statusData.data?.status || '').toLowerCase();
+    const status = String(statusData.status || statusData.state || statusData.data?.status || statusData.data?.data?.status || '').toLowerCase();
 
     if (status === 'completed' || status === 'succeeded' || status === 'success') {
-      const videoUrl = extractVideoUrl(statusData);
+      const videoUrl = extractNestedVideoUrl(statusData);
       if (!videoUrl) throw new Error('任务完成但没有视频 URL');
       return videoUrl;
     }

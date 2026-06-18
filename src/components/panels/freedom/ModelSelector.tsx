@@ -391,13 +391,16 @@ function isModelAllowedByPanelType(
   // 视频面板：先按 model_type 粗过滤
   if (modelType && modelType !== '音视频') return false;
 
-  // 再按 endpoint type 细过滤，排除纯音频类模型
-  if (endpointTypes.length > 0) {
-    return endpointTypes.some((t) => /视频|video|文生视频|图生视频|首尾帧|参考生视频|延长|动作控制|数字人|omni-video/i.test(t));
-  }
-
-  // endpoint 缺失时用模型名兜底判定（避免自定义展开型号被误过滤）
-  return /kling|veo|sora|runway|vidu|hailuo|minimax\/video|wan|luma|grok-video|seedance|aigc-video/i.test(modelId);
+  // endpoint type 与模型名都是「视频」的正向信号，任一命中即放行。
+  // 二者取「或」而非让 endpoint 短路：部分第三方供应商（如 silkroadai）会返回
+  // 不匹配视频正则的 supported_endpoint_types，导致明显是视频的模型（seedance 等）
+  // 被误过滤，从而在自由板块出现「当前已选模型不可用」。
+  // 纯音频/TTS 模型既无视频 endpoint、模型名也不含视频关键字，仍会被正确排除。
+  const matchesVideoEndpoint = endpointTypes.some((t) =>
+    /视频|video|文生视频|图生视频|首尾帧|参考生视频|延长|动作控制|数字人|omni-video/i.test(t)
+  );
+  const matchesVideoName = /kling|veo|sora|runway|vidu|hailuo|minimax\/video|wan|luma|grok-video|seedance|aigc-video/i.test(modelId);
+  return matchesVideoEndpoint || matchesVideoName;
 }
 
 export function ModelSelector({ type, value, onChange, className }: ModelSelectorProps) {
