@@ -38,6 +38,14 @@ const getRootBaseUrl = (baseUrl: string): string => {
   return baseUrl.replace(/\/+$/, '').replace(/\/v\d+$/, '');
 };
 
+/** 归一化 URL 字段：兼容字符串与数组（取首个）两种形态，其余返回 undefined */
+const normalizeUrlValue = (url: unknown): string | undefined => {
+  if (!url) return undefined;
+  if (Array.isArray(url)) return typeof url[0] === 'string' ? url[0] : undefined;
+  if (typeof url === 'string') return url;
+  return undefined;
+};
+
 /**
  * 图片端点路径映射（端点类型 → 提交/轮询 URL 路径）
  * 仅用于需要自定义路径的端点类型，其余走默认 /v1/images/generations
@@ -666,16 +674,46 @@ async function submitImageTask(
     // 标准格式: { data: [{ url }] }
     let taskId: string | undefined;
     const dataList = data.data;
-    if (Array.isArray(dataList) && dataList.length > 0) {
-      // 直接返回 URL（doubao-seedream、DALL-E 等同步模型）
-      if (dataList[0].url) return { imageUrl: dataList[0].url };
-      taskId = dataList[0].task_id?.toString();
-    }
-    taskId = taskId || data.task_id?.toString();
+    const firstItem = Array.isArray(dataList) ? dataList[0] : dataList;
+    // 兼容双层包装：{ data: { data: [...] } }
+    const nestedFirstItem = Array.isArray(firstItem?.data) ? firstItem.data[0] : firstItem?.data;
+
+    // 直接返回图片的同步模型（doubao-seedream、DALL-E、b64 直出等）
+    const directImageUrl = normalizeUrlValue(firstItem?.url)
+      || normalizeUrlValue(firstItem?.image_url)
+      || normalizeUrlValue(firstItem?.output_url)
+      || normalizeUrlValue(nestedFirstItem?.url)
+      || normalizeUrlValue(nestedFirstItem?.image_url)
+      || normalizeUrlValue(data.url)
+      || normalizeUrlValue(data.image_url)
+      || normalizeUrlValue(data.output_url)
+      || normalizeUrlValue(data.output?.url)
+      || (typeof data.output === 'string' && data.output.startsWith('http') ? data.output : undefined)
+      || normalizeUrlValue(Array.isArray(data.output) ? data.output[0] : undefined)
+      || normalizeUrlValue(Array.isArray(data.outputs) ? data.outputs[0] : undefined)
+      || normalizeUrlValue(Array.isArray(data.images) ? (data.images[0]?.url || data.images[0]) : undefined);
+    if (directImageUrl) return { imageUrl: directImageUrl };
+
+    // base64 直出格式（很多中转默认返回 b64_json 而非 URL）
+    const b64 = firstItem?.b64_json
+      || nestedFirstItem?.b64_json
+      || data.b64_json
+      || (Array.isArray(data.images) ? (data.images[0]?.b64_json || data.images[0]?.b64) : undefined);
+    if (b64) return { imageUrl: `data:image/png;base64,${b64}` };
+
+    taskId = firstItem?.task_id?.toString()
+      || firstItem?.id?.toString()
+      || nestedFirstItem?.task_id?.toString()
+      || nestedFirstItem?.id?.toString()
+      || data.task_id?.toString()
+      || data.id?.toString()
+      || data.request_id?.toString();
 
     if (!taskId) {
-      const directUrl = data.data?.[0]?.url || data.url;
-      if (directUrl) return { imageUrl: directUrl };
+      console.error(
+        '[ImageGenerator] 无法从响应中解析图片 URL 或任务 ID，响应体片段:',
+        JSON.stringify(data).slice(0, 500),
+      );
       throw new Error('No task_id or image URL in response');
     }
 
@@ -745,11 +783,29 @@ async function pollTaskStatus(
         const images = data.result?.images ?? data.data?.result?.images;
         let resultUrl: string | undefined;
         if (images?.[0]) {
-          const urlField = images[0].url;
-          resultUrl = Array.isArray(urlField) ? urlField[0] : urlField;
+          resultUrl = normalizeUrlValue(images[0].url) || normalizeUrlValue(images[0]);
         }
-        resultUrl = resultUrl || data.output_url || data.result_url || data.url;
-        if (!resultUrl) throw new Error('Task completed but no URL in result');
+        const firstItem = Array.isArray(data.data) ? data.data[0] : data.data;
+        resultUrl = resultUrl
+          || normalizeUrlValue(firstItem?.url)
+          || normalizeUrlValue(firstItem?.image_url)
+          || normalizeUrlValue(data.output_url)
+          || normalizeUrlValue(data.result_url)
+          || normalizeUrlValue(data.url)
+          || normalizeUrlValue(data.output?.url);
+        // base64 直出
+        if (!resultUrl) {
+          const b64 = firstItem?.b64_json || data.b64_json
+            || (images?.[0]?.b64_json);
+          if (b64) resultUrl = `data:image/png;base64,${b64}`;
+        }
+        if (!resultUrl) {
+          console.error(
+            '[ImageGenerator] 任务完成但无法解析图片 URL，响应体片段:',
+            JSON.stringify(data).slice(0, 500),
+          );
+          throw new Error('Task completed but no URL in result');
+        }
         return resultUrl;
       }
 
@@ -888,18 +944,39 @@ export async function submitGridImageRequest(params: {
 
   const dataField = data.data;
   const firstItem = Array.isArray(dataField) ? dataField[0] : dataField;
+  // 兼容双层包装：{ data: { data: [...] } }
+  const nestedFirstItem = Array.isArray(firstItem?.data) ? firstItem.data[0] : firstItem?.data;
+
+  // base64 直出格式（很多中转默认返回 b64_json 而非 URL）→ 转成 data URL 直接使用
+  const b64 = firstItem?.b64_json
+    || nestedFirstItem?.b64_json
+    || data.b64_json
+    || (Array.isArray(data.images) ? (data.images[0]?.b64_json || data.images[0]?.b64) : undefined);
 
   const imageUrl = normalizeUrl(firstItem?.url)
     || normalizeUrl(firstItem?.image_url)
     || normalizeUrl(firstItem?.output_url)
+    || normalizeUrl(nestedFirstItem?.url)
+    || normalizeUrl(nestedFirstItem?.image_url)
     || normalizeUrl(data.url)
     || normalizeUrl(data.image_url)
-    || normalizeUrl(data.output_url);
+    || normalizeUrl(data.output_url)
+    || normalizeUrl(data.output?.url)
+    || (typeof data.output === 'string' && data.output.startsWith('http') ? data.output : undefined)
+    || normalizeUrl(Array.isArray(data.output) ? data.output[0] : undefined)
+    || normalizeUrl(Array.isArray(data.outputs) ? data.outputs[0] : undefined)
+    || normalizeUrl(Array.isArray(data.images) ? (data.images[0]?.url || data.images[0]) : undefined)
+    || (b64 ? `data:image/png;base64,${b64}` : undefined);
 
   const taskId = firstItem?.task_id?.toString()
     || firstItem?.id?.toString()
+    || nestedFirstItem?.task_id?.toString()
+    || nestedFirstItem?.id?.toString()
     || data.task_id?.toString()
-    || data.id?.toString();
+    || data.id?.toString()
+    || data.request_id?.toString()
+    || data.data?.task_id?.toString()
+    || data.data?.id?.toString();
 
   // 如果只有 taskId 没有 imageUrl，自动轮询获取结果（与 generateImage 行为一致）
   if (!imageUrl && taskId) {
@@ -913,6 +990,14 @@ export async function submitGridImageRequest(params: {
   if (taskId) {
     const pollUrl = `${rootBase}${imagePaths.poll(taskId)}`;
     return { imageUrl, taskId, pollUrl };
+  }
+
+  // 既无图片也无 taskId：打印响应体片段，便于定位中转返回的真实格式
+  if (!imageUrl) {
+    console.error(
+      '[GridImageAPI] 无法从响应中解析图片 URL 或任务 ID，响应体片段:',
+      JSON.stringify(data).slice(0, 500),
+    );
   }
 
   return { imageUrl, taskId };
