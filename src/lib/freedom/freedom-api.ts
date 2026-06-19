@@ -903,8 +903,60 @@ async function _generateFreedomVideoInner(
       break;
   }
 
-  const mediaId = saveToMediaLibrary(result.url, params.prompt, 'ai-video');
-  return { ...result, mediaId };
+  // 受鉴权保护的内容端点（如 sora/veo 的 /v1/videos/{id}/content）必须携带 apiKey 才能下载。
+  // 直接交给 <video src> 或 Electron 下载都不会带 Authorization 头，会 401 导致无法播放/保存。
+  // 这里用 apiKey 主动拉取一次：blob 用于即时播放，data URL 交给媒体库落盘持久化。
+  const playable = await resolveProtectedVideoUrl(result.url, apiKey);
+
+  const mediaId = saveToMediaLibrary(playable.persistUrl, params.prompt, 'ai-video');
+  return { ...result, url: playable.playbackUrl, mediaId };
+}
+
+/**
+ * 判断 URL 是否为需要鉴权的视频内容端点（OpenAI 官方视频格式 /v1/videos/{id}/content）。
+ */
+function isProtectedVideoContentUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url) && /\/videos\/[^/]+\/content\/?$/i.test(url);
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('视频转码失败'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * 解析最终视频地址，确保它在浏览器中可直接播放、可持久化。
+ * - 普通公开 URL：原样返回（playbackUrl === persistUrl）。
+ * - 受鉴权保护的 /content 端点：带 apiKey 下载一次字节，
+ *   playbackUrl 为 blob object URL（<video> 直接播放，localStorage 友好），
+ *   persistUrl 为 data URL（媒体库 base64 落盘，无需再次发起鉴权请求）。
+ */
+async function resolveProtectedVideoUrl(
+  url: string,
+  apiKey: string,
+): Promise<{ playbackUrl: string; persistUrl: string }> {
+  if (!isProtectedVideoContentUrl(url)) {
+    return { playbackUrl: url, persistUrl: url };
+  }
+  try {
+    const resp = await corsFetch(url, {
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+    });
+    if (!resp.ok) {
+      console.warn(`[Freedom] 受保护视频下载失败 (${resp.status})，回退原始 URL`);
+      return { playbackUrl: url, persistUrl: url };
+    }
+    const blob = await resp.blob();
+    const dataUrl = await blobToDataUrl(blob);
+    return { playbackUrl: URL.createObjectURL(blob), persistUrl: dataUrl };
+  } catch (err) {
+    console.warn('[Freedom] 受保护视频下载异常，回退原始 URL：', err);
+    return { playbackUrl: url, persistUrl: url };
+  }
 }
 
 /**
