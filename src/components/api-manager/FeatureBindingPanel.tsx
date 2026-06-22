@@ -140,9 +140,9 @@ const MODEL_CAPABILITIES: Record<string, ModelCapability[]> = {
   'MiniMax-M2.1': ['text'],
   'qwen3-max': ['text'],
   'qwen3-max-preview': ['text'],
-  'gemini-2.0-flash': ['text'],
-  'gemini-3-flash-preview': ['text'],
-  'gemini-3-pro-preview': ['text'],
+  'gemini-2.0-flash': ['text', 'vision'],
+  'gemini-3-flash-preview': ['text', 'vision'],
+  'gemini-3-pro-preview': ['text', 'vision'],
   'claude-haiku-4-5-20251001': ['text', 'vision'],
 
   // ---- 图片生成模型 ----

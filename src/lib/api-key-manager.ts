@@ -95,14 +95,31 @@ export function classifyModelByName(modelName: string): ModelCapability[] {
   // "xxx-image-preview" 类（如 gemini-3-pro-image-preview）
   if (/image[- ]?preview/.test(name)) return ['image_generation'];
 
-  // ---- 视觉/识图模型 ----
-  if (/vision/.test(name)) return ['text', 'vision'];
-
-  // ---- TTS / Audio 模型（不归入任何主分类）----
+  // ---- 视觉/识图（多模态）模型 ----
+  // 主流多模态模型：名称命中即视为支持识图，不依赖 /api/pricing_new 元数据
+  // （部分中转站如 look2eye 无该接口，否则只能靠硬编码表识别 vision）。
+  // 注意：视频 / 图片生成已在上方提前返回；此处先排除 TTS/Audio/Embedding，
+  // 避免 gemini-embedding 等被误判为识图模型。
   if (/tts|whisper|audio/.test(name)) return ['text'];
-
-  // ---- Embedding 模型 ----
   if (/embed/.test(name)) return ['embedding'];
+
+  if (/vision/.test(name)) return ['text', 'vision'];
+  // qwen-vl / qwen2.5-vl / internvl 等带 -vl 后缀的视觉语言模型
+  if (/(^|[-_])vl([-_]|\d|$)/.test(name) || /internvl|llava|pixtral|minicpm-v/.test(name)) {
+    return ['text', 'vision'];
+  }
+  // GLM 视觉系列（glm-4v / glm-4.6v 等，"v" 紧跟版本号）
+  if (/glm[-_.]?\d[\d.]*v/.test(name)) return ['text', 'vision'];
+  // Gemini 全系多模态（1.5/2.0/2.5/3）——纯文本场景同样接受图片输入
+  if (/gemini/.test(name)) return ['text', 'vision'];
+  // Claude 3 及以上（haiku/sonnet/opus 各代）均支持识图
+  if (/claude[-_]?3/.test(name) || /claude.*(haiku|sonnet|opus)/.test(name)) {
+    return ['text', 'vision'];
+  }
+  // GPT-4o / GPT-4.1 / GPT-4 Turbo / GPT-4 Vision / GPT-5 系列多模态
+  if (/gpt[-_]?4o|gpt[-_]?4\.1|gpt[-_]?4[-_]?turbo|gpt[-_]?4[-_]?vision|gpt[-_]?5|chatgpt[-_]?4o/.test(name)) {
+    return ['text', 'vision'];
+  }
 
   // ---- 推理/思考模型（仍归入 text）----
   if (/[- ](r1|thinking|reasoner|reason)/.test(name) || /^o[1-9]/.test(name)) return ['text', 'reasoning'];
