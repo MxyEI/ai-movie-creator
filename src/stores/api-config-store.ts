@@ -485,11 +485,11 @@ export interface APIConfigStatus {
 
 /**
  * 供应商信息映射
- * 1. memefast - 魔因API，全功能 AI 中转（推荐）
+ * 1. memefast - 看两眼API，全功能 AI 中转（推荐）
  * 2. runninghub - RunningHub，视角切换/多角度生成
  */
 const PROVIDER_INFO: Record<ProviderId, { name: string; services: ServiceType[] }> = {
-  memefast: { name: '魔因API', services: ['chat', 'image', 'video', 'vision'] },
+  memefast: { name: '看两眼API', services: ['chat', 'image', 'video', 'vision'] },
   runninghub: { name: 'RunningHub', services: ['image', 'vision'] },
   openai: { name: 'OpenAI', services: [] },
   custom: { name: 'Custom', services: [] },
@@ -610,47 +610,55 @@ export const useAPIConfigStore = create<APIConfigStore>()(
 
           if (isMemefast) {
             // MemeFast: /api/pricing_new 获取全量元数据（公开接口）
+            // 注意：并非所有中转站都提供此接口（例如 look2eye 无此接口）。
+            // 因此采用"尽力而为"策略：拿不到就跳过，继续走下面的 /v1/models
+            // 标准流程（与自定义 API / 网页端一致），由 supported_endpoint_types
+            // 提供端点元数据，避免因缺少元数据而把 gpt-image 等模型路由到错误端点。
             const domain = baseUrl.replace(/\/v\d+$/, '');
             const pricingUrl = `${domain}/api/pricing_new`;
 
-            const response = await fetch(pricingUrl);
-            if (!response.ok) {
-              return { success: false, count: 0, error: `pricing_new API 返回 ${response.status}` };
-            }
+            try {
+              const response = await fetch(pricingUrl);
+              if (!response.ok) {
+                console.warn(`[APIConfig] pricing_new 返回 ${response.status}，降级到 /v1/models 标准流程`);
+              } else {
+                const json = await response.json();
+                const data: Array<{ model_name: string; model_type?: string; tags?: string; supported_endpoint_types?: string[]; enable_groups?: string[] }> = json.data;
+                if (!Array.isArray(data) || data.length === 0) {
+                  console.warn('[APIConfig] pricing_new 响应格式异常，降级到 /v1/models 标准流程');
+                } else {
+                  console.log(`[APIConfig] Fetched ${data.length} models from pricing_new`);
 
-            const json = await response.json();
-            const data: Array<{ model_name: string; model_type?: string; tags?: string; supported_endpoint_types?: string[]; enable_groups?: string[] }> = json.data;
-            if (!Array.isArray(data) || data.length === 0) {
-              return { success: false, count: 0, error: '响应格式异常' };
-            }
+                  // Collect fresh MemeFast metadata first.
+                  // After sync completes we remove only this provider's stale entries,
+                  // then merge these fresh values into the latest store state.
+                  for (const m of data) {
+                    const name = m.model_name;
+                    if (!name) continue;
+                    if (m.model_type) memefastTypes[name] = m.model_type;
+                    if (m.tags) {
+                      memefastTags[name] = typeof m.tags === 'string'
+                        ? m.tags.split(',').map((t: string) => t.trim()).filter(Boolean)
+                        : m.tags;
+                    }
+                    if (Array.isArray(m.supported_endpoint_types)) {
+                      memefastEndpoints[name] = m.supported_endpoint_types;
+                    }
+                    if (Array.isArray(m.enable_groups) && m.enable_groups.length > 0) {
+                      memefastEnableGroups[name] = m.enable_groups;
+                    }
+                  }
 
-            console.log(`[APIConfig] Fetched ${data.length} models from pricing_new`);
-
-            // Collect fresh MemeFast metadata first.
-            // After sync completes we remove only this provider's stale entries,
-            // then merge these fresh values into the latest store state.
-            for (const m of data) {
-              const name = m.model_name;
-              if (!name) continue;
-              if (m.model_type) memefastTypes[name] = m.model_type;
-              if (m.tags) {
-                memefastTags[name] = typeof m.tags === 'string'
-                  ? m.tags.split(',').map((t: string) => t.trim()).filter(Boolean)
-                  : m.tags;
+                  // pricing_new 返回全量（公开列表），先收入
+                  for (const m of data) {
+                    if (typeof m.model_name === 'string' && m.model_name.length > 0) {
+                      allModelIds.add(m.model_name);
+                    }
+                  }
+                }
               }
-              if (Array.isArray(m.supported_endpoint_types)) {
-                memefastEndpoints[name] = m.supported_endpoint_types;
-              }
-              if (Array.isArray(m.enable_groups) && m.enable_groups.length > 0) {
-                memefastEnableGroups[name] = m.enable_groups;
-              }
-            }
-
-            // pricing_new 返回全量（公开列表），先收入
-            for (const m of data) {
-              if (typeof m.model_name === 'string' && m.model_name.length > 0) {
-                allModelIds.add(m.model_name);
-              }
+            } catch (e) {
+              console.warn('[APIConfig] pricing_new 请求失败，降级到 /v1/models 标准流程:', e);
             }
 
             // 再遍历每个 key 查 /v1/models 补充该 key 独有模型
@@ -1138,7 +1146,7 @@ export const useAPIConfigStore = create<APIConfigStore>()(
         const state = get();
         const payload = {
           _type: 'moyin-api-config',
-          _version: 13,
+          _version: 14,
           _exportedAt: new Date().toISOString(),
           providers: state.providers,
           featureBindings: state.featureBindings,
@@ -1237,12 +1245,12 @@ export const useAPIConfigStore = create<APIConfigStore>()(
     }),
     {
       name: 'opencut-api-config',  // localStorage key
-      version: 13,  // v13: clear stale metadata caches on upgrade + fix chained migration
+      version: 14,  // v14: rebrand 魔因API → 看两眼API (name + baseUrl)
       migrate: (persistedState: unknown, version: number) => {
         // Use mutable result object for chained migration
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const result = { ...(persistedState as any) } as Partial<APIConfigState> & { imageHostConfig?: LegacyImageHostConfig };
-        console.log(`[APIConfig] Chained migration: v${version} → v13`);
+        console.log(`[APIConfig] Chained migration: v${version} → v14`);
         
         // Default feature bindings for migration
         const defaultBindings: FeatureBindings = {
@@ -1524,6 +1532,28 @@ export const useAPIConfigStore = create<APIConfigStore>()(
           }
           
           version = 13;
+        }
+
+        // v13 → v14: Rebrand 魔因API (memefast) → 看两眼API, update baseUrl
+        // Force-rewrite the persisted name/baseUrl for users who already have the old provider.
+        if (version <= 13) {
+          if (Array.isArray(result.providers)) {
+            result.providers = result.providers.map((p: IProvider) => {
+              if (p.platform !== 'memefast') return p;
+              const updated = { ...p };
+              if (!p.name || p.name.trim() === '' || p.name === '魔因API') {
+                updated.name = '看两眼API';
+              }
+              if (!p.baseUrl || p.baseUrl.trim() === '' || p.baseUrl.replace(/\/+$/, '') === 'https://memefast.top') {
+                updated.baseUrl = 'https://api.look2eye.com';
+              }
+              if (updated.name !== p.name || updated.baseUrl !== p.baseUrl) {
+                console.log(`[APIConfig] v13→v14: Rebranded memefast provider name "${p.name}" -> "${updated.name}", baseUrl "${p.baseUrl}" -> "${updated.baseUrl}"`);
+              }
+              return updated;
+            });
+          }
+          version = 14;
         }
 
         // ========== Final normalization (always runs) ==========

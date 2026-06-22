@@ -32,7 +32,7 @@ import type { IProvider } from "@/lib/api-key-manager";
 
 /**
  * 平台预设配置
- * 1. 魔因API (memefast) - 全功能中转（推荐）
+ * 1. 看两眼API (look2eye) - 全功能中转（推荐）
  * 2. RunningHub - 视角切换/多角度生成
  * 3. 自定义 - OpenAI 兼容 API
  */
@@ -47,22 +47,22 @@ const PLATFORM_PRESETS: Array<{
 }> = [
   {
     platform: "memefast",
-    name: "魔因API",
-    baseUrl: "https://memefast.top",
+    name: "看两眼API",
+    baseUrl: "https://api.look2eye.com",
     description: "543+ 模型中转，支持 GPT/Claude/Gemini/DeepSeek/Veo/Sora 等",
     services: ["对话", "图片生成", "视频生成", "图片理解"],
     models: [
-      "deepseek-v3.2",
-      "glm-4.7",
+      "deepseek-v4",
+      "glm-5.1",
       "gemini-3-pro-preview",
       "gemini-3-pro-image-preview",
-      "gpt-image-1.5",
-      "doubao-seedance-1-5-pro-251215",
+      "gpt-image-2",
+      "seedance-2.0-1080",
       "veo3.1",
       "sora-2-all",
       "wan2.6-i2v",
       "grok-video-3-10s",
-      "claude-haiku-4-5-20251001",
+      "claude-sonnet-4-6",
     ],
     recommended: true,
   },

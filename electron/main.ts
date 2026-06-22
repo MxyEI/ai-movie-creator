@@ -1,7 +1,7 @@
 // Copyright (c) 2025 hotflow2024
 // Licensed under AGPL-3.0-or-later. See LICENSE for details.
 // Commercial licensing available. See COMMERCIAL_LICENSE.md.
-import { app, BrowserWindow, ipcMain, protocol, net, dialog, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, protocol, net, dialog, shell, session } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import https from 'node:https'
@@ -155,6 +155,46 @@ async function resolveAvailableUpdate(currentVersion: string): Promise<Available
     baiduUrl: manifest.baiduUrl,
     baiduCode: manifest.baiduCode,
   }
+}
+
+/**
+ * Inject CORS headers on cross-origin responses and answer OPTIONS preflight,
+ * so the renderer can call third-party APIs that lack Access-Control-* headers.
+ *
+ * Only affects cross-origin http(s) requests; same-origin app assets, the dev
+ * server, HMR and custom protocols (local-image://) are left untouched.
+ */
+function installCorsBypass(targetSession: Electron.Session) {
+  const isApiRequest = (url: string) => {
+    // Only touch real http(s) network calls to other origins.
+    if (!/^https?:\/\//i.test(url)) return false
+    if (url.startsWith('http://localhost') || url.startsWith('http://127.0.0.1')) return false
+    return true
+  }
+
+  // Short-circuit CORS preflight (OPTIONS) — respond 200 with permissive headers
+  // so the browser proceeds to the actual request.
+  targetSession.webRequest.onHeadersReceived((details, callback) => {
+    if (!isApiRequest(details.url)) {
+      callback({ responseHeaders: details.responseHeaders })
+      return
+    }
+
+    const responseHeaders = { ...(details.responseHeaders || {}) }
+    // Drop any existing (possibly restrictive) CORS headers, then set permissive ones.
+    for (const key of Object.keys(responseHeaders)) {
+      if (/^access-control-/i.test(key)) delete responseHeaders[key]
+    }
+    responseHeaders['Access-Control-Allow-Origin'] = ['*']
+    responseHeaders['Access-Control-Allow-Methods'] = ['GET, POST, PUT, DELETE, PATCH, OPTIONS']
+    responseHeaders['Access-Control-Allow-Headers'] = ['*']
+
+    if (details.method === 'OPTIONS') {
+      callback({ responseHeaders, statusLine: 'HTTP/1.1 200 OK' })
+      return
+    }
+    callback({ responseHeaders })
+  })
 }
 
 function createWindow() {
@@ -1675,6 +1715,16 @@ app.whenReady().then(() => {
   seedDemoProject()
 
   scheduleAutoClean()
+
+  // Bypass CORS for outbound API calls.
+  // Electron's renderer is Chromium with webSecurity on, so cross-origin
+  // API requests (look2eye / runninghub / etc.) still go through CORS
+  // preflight. Many of these endpoints don't return Access-Control-* headers,
+  // so we inject them on the response and short-circuit OPTIONS preflight.
+  // This keeps webSecurity enabled (safer) and works for both the dev server
+  // (http://localhost:5173) and packaged builds (file://).
+  installCorsBypass(session.defaultSession)
+
   // Handle local-image:// protocol
   protocol.handle('local-image', async (request) => {
     try {

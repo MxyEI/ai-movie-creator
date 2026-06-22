@@ -131,6 +131,8 @@ npm run build
 
 # 仅编译（不打包）
 npx electron-vite build
+
+pnpm dev:web
 ```
 
 ## 技术架构
@@ -163,40 +165,6 @@ moyin-creator/
 ├── build/                 # 构建资源（图标）
 └── scripts/               # 工具脚本
 ```
-
-## 许可证
-
-本项目采用 **双重许可** 模式：
-
-### 开源使用 — AGPL-3.0
-
-本项目以 [GNU AGPL-3.0](LICENSE) 许可证开源。你可以自由使用、修改和分发，但修改后的代码必须以相同许可证开源。
-
-### 商业使用
-
-如果你需要闭源使用或集成到商业产品中，请联系我们获取 [商业许可](COMMERCIAL_LICENSE.md)。
-
-## 贡献
-
-欢迎贡献！请阅读 [贡献指南](CONTRIBUTING.md) 了解详情。
-
-## 联系
-
-- 📧 Email: [memecalculate@gmail.com](mailto:memecalculate@gmail.com)
-- 🐙 GitHub: [https://github.com/MemeCalculate/moyin-creator](https://github.com/MemeCalculate/moyin-creator)
-
-### 联系我们
-
-
-
-<img src="https://github.com/user-attachments/assets/b82a1aab-0b57-4fe4-afec-0f4ff879d7c3" width="200" alt="交流群" />
-
-<img src="docs/images/wechat-contact.png" width="200" alt="微信联系" />
-
-
----
-
-<p align="center">Made with ❤️ by <a href="https://github.com/MemeCalculate">MemeCalculate</a></p>
 
 
 

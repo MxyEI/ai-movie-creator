@@ -557,7 +557,7 @@ export function FeatureBindingPanel() {
                               ))}
                             </div>
                             <span className="text-[11px] text-blue-600/80 dark:text-blue-400/80">
-                              建议在 memefast.top 后台为以上分组都添加 Key，Key 越多可用性越高。
+                              建议在 api.look2eye.com 后台为以上分组都添加 Key，Key 越多可用性越高。
                             </span>
                           </div>
                         );

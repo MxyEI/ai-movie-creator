@@ -78,7 +78,7 @@ export function APISettings({ collapsed = true, onToggleCollapse }: APISettingsP
   }> = [
     {
       id: "memefast",
-      name: "魔因API",
+      name: "看两眼API",
       description: "全功能 AI 中转，支持对话/图片/视频/图片理解",
       services: ["对话", "图片", "视频", "图片理解"],
     },

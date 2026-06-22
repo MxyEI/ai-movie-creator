@@ -783,7 +783,7 @@ export function SettingsPanel() {
 
           {/* MemeFast 购买引导 */}
           <a
-            href="https://memefast.top"
+            href="https://api.look2eye.com"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-3 p-4 bg-gradient-to-r from-orange-500/5 to-primary/5 border border-orange-500/20 rounded-lg hover:border-orange-500/40 transition-colors group"
@@ -793,7 +793,7 @@ export function SettingsPanel() {
             </div>
             <div className="flex-1 min-w-0">
               <h3 className="font-medium text-foreground text-sm flex items-center gap-2">
-                魔因API
+                看两眼API
                 <span className="text-[10px] px-1.5 py-0.5 bg-orange-500/10 text-orange-600 dark:text-orange-400 rounded">
                   推荐
                 </span>
@@ -825,16 +825,16 @@ export function SettingsPanel() {
                   尚未配置任何供应商
                 </h3>
                 <p className="text-sm text-muted-foreground mb-2">
-                  推荐使用魔因API，支持 543+ 模型一站式接入
+                  推荐使用看两眼API，支持 543+ 模型一站式接入
                 </p>
                 <a
-                  href="https://memefast.top"
+                  href="https://api.look2eye.com"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline mb-4"
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
-                  前往魔因API获取 Key
+                  前往看两眼API获取 Key
                 </a>
                 <Button onClick={() => setAddDialogOpen(true)}>
                   <Plus className="h-4 w-4 mr-1" />
@@ -1025,13 +1025,13 @@ export function SettingsPanel() {
                         {provider.platform === 'memefast' && !configured && (
                           <div className="px-4 pb-2">
                             <a
-                              href="https://memefast.top"
+                              href="https://api.look2eye.com"
                               target="_blank"
                               rel="noopener noreferrer"
                               className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
                             >
                               <ExternalLink className="h-3 w-3" />
-                              前往魔因API获取 Key →
+                              前往看两眼API获取 Key →
                             </a>
                           </div>
                         )}
@@ -1670,7 +1670,7 @@ export function SettingsPanel() {
         open={addDialogOpen}
         onOpenChange={setAddDialogOpen}
         onSubmit={(providerData) => {
-          // 魔因API：已存在时合并 Key，不重复创建
+          // 看两眼API：已存在时合并 Key，不重复创建
           const existingMemefast = providerData.platform === 'memefast'
             ? providers.find((p) => p.platform === 'memefast')
             : null;

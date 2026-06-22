@@ -15,22 +15,13 @@
  * 跨域请求都会被自动代理，无需逐个改写调用点。
  */
 
-/** window 上的运行时增强字段（Electron 注入 / 本模块的安装标记） */
+/** window 上的运行时增强字段（本模块的安装标记） */
 type AugmentedWindow = Window & {
-  electron?: unknown;
-  ipcRenderer?: unknown;
   __corsProxyInstalled?: boolean;
 };
 
 function augmentedWindow(): AugmentedWindow {
   return window as AugmentedWindow;
-}
-
-/** 检测是否在 Electron 环境中运行 */
-function isElectron(): boolean {
-  if (typeof window === 'undefined') return false;
-  const w = augmentedWindow();
-  return !!(w.electron || w.ipcRenderer);
 }
 
 /** 检测是否在 Vite 开发服务器中运行 */
@@ -113,12 +104,19 @@ async function proxiedFetch(
 }
 
 /**
- * 在浏览器开发模式下全局安装 CORS 代理（替换 window.fetch）。
- * 幂等：重复调用无副作用。Electron / 非开发环境下为空操作。
+ * 在开发模式下全局安装 CORS 代理（替换 window.fetch）。
+ * 幂等：重复调用无副作用。
+ *
+ * 关键：Electron 开发环境同样加载 Vite dev server（http://localhost:5173），
+ * 因此 `/__api_proxy` 中间件可用。此前在 Electron 下禁用代理会导致请求走
+ * 原生直连，行为与网页端分叉（CORS 被拦 / 拿不到完整响应元数据）。
+ * 现统一：只要处于 Vite dev 模式就启用代理（涵盖 web dev 与 electron dev），
+ * 二者跨域处理流程完全一致。Electron 打包版（file://，非 dev）则由主进程
+ * 的 installCorsBypass 处理。
  */
 export function installCorsProxy(): void {
   if (typeof window === 'undefined') return;
-  if (isElectron() || !isViteDev()) return;
+  if (!isViteDev()) return;
   const w = augmentedWindow();
   if (w.__corsProxyInstalled) return;
   w.__corsProxyInstalled = true;
@@ -136,7 +134,7 @@ export function installCorsProxy(): void {
     }
   };
 
-  console.info('[cors-proxy] 已启用：跨域请求将经 /__api_proxy 转发（web 开发模式）');
+  console.info('[cors-proxy] 已启用：跨域请求将经 /__api_proxy 转发（dev 模式，含 electron dev）');
 }
 
 /**
