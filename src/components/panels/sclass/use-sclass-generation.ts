@@ -421,7 +421,8 @@ export function useSClassGeneration() {
         // 7. 保存视频到本地
         const localUrl = await saveVideoLocally(
           videoUrl,
-          group.sceneIds[0] || 0
+          group.sceneIds[0] || 0,
+          keyManager.getCurrentKey() || undefined
         );
 
         // 8. 更新状态 → 完成
@@ -704,7 +705,7 @@ export function useSClassGeneration() {
           throw lastVideoError || new Error("视频生成失败：没有可用 API Key");
         }
 
-        const localUrl = await saveVideoLocally(videoUrl, sceneId);
+        const localUrl = await saveVideoLocally(videoUrl, sceneId, keyManager.getCurrentKey() || undefined);
 
         updateSingleShotVideo(sceneId, {
           videoStatus: "completed",

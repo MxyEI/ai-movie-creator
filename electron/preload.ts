@@ -25,9 +25,9 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
 
 // Image storage API
 contextBridge.exposeInMainWorld('imageStorage', {
-  // Save image from URL to local storage
-  saveImage: (url: string, category: string, filename: string) => 
-    ipcRenderer.invoke('save-image', { url, category, filename }),
+  // Save image from URL to local storage (optional auth headers for protected URLs)
+  saveImage: (url: string, category: string, filename: string, headers?: Record<string, string>) =>
+    ipcRenderer.invoke('save-image', { url, category, filename, headers }),
   
   // Get actual file path for a local-image:// URL
   getImagePath: (localPath: string) => 

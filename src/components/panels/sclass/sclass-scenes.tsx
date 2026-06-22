@@ -1622,7 +1622,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       let finalVideoUrl = videoUrl;
       try {
         const filename = `scene_${sceneId + 1}_${Date.now()}.mp4`;
-        finalVideoUrl = await saveVideoToLocal(videoUrl, filename);
+        finalVideoUrl = await saveVideoToLocal(videoUrl, filename, apiKey);
         console.log('[SplitScenes] Video saved locally:', finalVideoUrl);
       } catch (e) {
         console.warn('[SplitScenes] Failed to save video locally, using URL:', e);

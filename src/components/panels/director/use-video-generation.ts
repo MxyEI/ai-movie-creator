@@ -1311,10 +1311,10 @@ async function callReplicateVideoApi(
 }
 
 // Save video to local and return the local URL
-export async function saveVideoLocally(videoUrl: string, sceneId: number): Promise<string> {
+export async function saveVideoLocally(videoUrl: string, sceneId: number, apiKey?: string): Promise<string> {
   try {
     const filename = `scene_${sceneId + 1}_${Date.now()}.mp4`;
-    const localUrl = await saveVideoToLocal(videoUrl, filename);
+    const localUrl = await saveVideoToLocal(videoUrl, filename, apiKey);
     console.log('[VideoGen] Video saved locally:', localUrl);
     return localUrl;
   } catch (e) {

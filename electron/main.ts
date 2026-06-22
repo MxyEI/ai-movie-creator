@@ -465,7 +465,7 @@ const getImagesDir = (subDir: string) => {
 }
 
 // Download image from URL and save to local file
-const downloadImage = (url: string, filePath: string, maxRedirects: number = 5): Promise<void> => {
+const downloadImage = (url: string, filePath: string, maxRedirects: number = 5, headers?: Record<string, string>): Promise<void> => {
   return new Promise((resolve, reject) => {
     if (maxRedirects <= 0) {
       reject(new Error('Too many redirects'))
@@ -473,25 +473,27 @@ const downloadImage = (url: string, filePath: string, maxRedirects: number = 5):
     }
     const protocol = url.startsWith('https') ? https : http
     const file = fs.createWriteStream(filePath)
-    
-    protocol.get(url, (response) => {
+
+    const requestOptions = headers && Object.keys(headers).length > 0 ? { headers } : {}
+    protocol.get(url, requestOptions, (response) => {
       const status = response.statusCode ?? 0
       if ([301, 302, 303, 307, 308].includes(status)) {
         file.close()
         const redirectUrl = response.headers.location
         if (redirectUrl) {
-          downloadImage(redirectUrl, filePath, maxRedirects - 1).then(resolve).catch(reject)
+          // 跨域重定向（如转到无需鉴权的 CDN）时保留鉴权头，兼容同站受保护资源
+          downloadImage(redirectUrl, filePath, maxRedirects - 1, headers).then(resolve).catch(reject)
           return
         }
       }
-      
+
       if (status !== 200) {
         file.close()
         fs.unlink(filePath, () => {})
         reject(new Error(`Failed to download: ${status}`))
         return
       }
-      
+
       response.pipe(file)
       file.on('finish', () => {
         file.close()
@@ -856,7 +858,7 @@ async function uploadImageHostFromMain({
 }
 
 // IPC handlers for image management
-ipcMain.handle('save-image', async (_event, { url, category, filename }) => {
+ipcMain.handle('save-image', async (_event, { url, category, filename, headers }) => {
   try {
     const imagesDir = getImagesDir(category)
     const ext = path.extname(filename) || '.png'
@@ -875,7 +877,7 @@ ipcMain.handle('save-image', async (_event, { url, category, filename }) => {
       }
       fs.writeFileSync(filePath, buffer)
     } else {
-      await downloadImage(url, filePath)
+      await downloadImage(url, filePath, 5, headers)
     }
     
     // Validate file was written successfully with non-zero size
@@ -1733,10 +1735,7 @@ app.whenReady().then(() => {
       const category = url.hostname
       const filename = decodeURIComponent(url.pathname.slice(1)) // Remove leading / and decode
       const filePath = path.join(getMediaRoot(), category, filename)
-      
-      // Read file directly
-      const data = fs.readFileSync(filePath)
-      
+
       // Determine MIME type based on extension
       const ext = path.extname(filename).toLowerCase()
       const mimeTypes: Record<string, string> = {
@@ -1755,9 +1754,40 @@ app.whenReady().then(() => {
         '.mkv': 'video/x-matroska',
       }
       const mimeType = mimeTypes[ext] || 'application/octet-stream'
-      
+
+      const stat = fs.statSync(filePath)
+      const totalSize = stat.size
+
+      // 视频播放（<video>）会发 Range 请求以支持流式加载和拖动进度条。
+      // 必须返回 206 Partial Content + Accept-Ranges，否则可能无法播放/无法 seek。
+      const rangeHeader = request.headers.get('Range') || request.headers.get('range')
+      if (rangeHeader) {
+        const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader)
+        let start = match && match[1] ? parseInt(match[1], 10) : 0
+        let end = match && match[2] ? parseInt(match[2], 10) : totalSize - 1
+        if (Number.isNaN(start) || start < 0) start = 0
+        if (Number.isNaN(end) || end >= totalSize) end = totalSize - 1
+        if (start > end) start = 0
+
+        const chunk = fs.readFileSync(filePath).subarray(start, end + 1)
+        return new Response(chunk, {
+          status: 206,
+          headers: {
+            'Content-Type': mimeType,
+            'Content-Range': `bytes ${start}-${end}/${totalSize}`,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': String(chunk.length),
+          },
+        })
+      }
+
+      const data = fs.readFileSync(filePath)
       return new Response(data, {
-        headers: { 'Content-Type': mimeType }
+        headers: {
+          'Content-Type': mimeType,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(totalSize),
+        },
       })
     } catch (error) {
       console.error('Failed to load local image:', error)

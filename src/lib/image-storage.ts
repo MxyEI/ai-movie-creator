@@ -6,11 +6,16 @@
  * Handles saving and loading images via Electron IPC
  */
 
+import { useAPIConfigStore, type AIFeature } from '@/stores/api-config-store';
+import { parseApiKeys } from '@/lib/api-key-manager';
+import { getFeatureConfig } from '@/lib/ai/feature-router';
+import { corsFetch } from '@/lib/cors-fetch';
+
 // Type declarations for the imageStorage API exposed by preload
 declare global {
   interface Window {
     imageStorage?: {
-      saveImage: (url: string, category: string, filename: string) => Promise<{ success: boolean; localPath?: string; error?: string }>;
+      saveImage: (url: string, category: string, filename: string, headers?: Record<string, string>) => Promise<{ success: boolean; localPath?: string; error?: string }>;
       getImagePath: (localPath: string) => Promise<string | null>;
       deleteImage: (localPath: string) => Promise<boolean>;
       readAsBase64: (localPath: string) => Promise<{ success: boolean; base64?: string; mimeType?: string; size?: number; error?: string }>;
@@ -27,6 +32,93 @@ export type ImageCategory = 'characters' | 'scenes' | 'shots' | 'wardrobe' | 'vi
 export const isElectron = (): boolean => {
   return typeof window !== 'undefined' && !!window.imageStorage;
 };
+
+/**
+ * 为受保护的媒体 URL 解析鉴权请求头。
+ *
+ * 部分中转站（如 look2eye）返回的视频/图片内容地址（例如
+ * https://ai.silkroadai.io/v1/videos/.../content）需要携带 Bearer token
+ * 才能访问，否则主进程下载或页面预览会得到 401。
+ *
+ * 注意：内容地址的 host 可能与 provider 的 baseUrl 不同（上游存储域名），
+ * 因此不能仅靠 host 匹配；这里收集所有已配置 provider 的首个可用 Key，
+ * 优先使用指定功能绑定的 Key。本地 / data URL 不需要鉴权，返回 undefined。
+ */
+function resolveAuthHeaders(url: string, feature?: AIFeature): Record<string, string> | undefined {
+  if (!url || url.startsWith('local-image://') || url.startsWith('data:') || url.startsWith('file://')) {
+    return undefined;
+  }
+
+  const tryKey = (key?: string | null): Record<string, string> | undefined =>
+    key ? { Authorization: `Bearer ${key}` } : undefined;
+
+  // 1. 优先使用功能绑定 provider 的 Key
+  if (feature) {
+    try {
+      const config = getFeatureConfig(feature);
+      const fromFeature = tryKey(config?.apiKey);
+      if (fromFeature) return fromFeature;
+    } catch {
+      /* getFeatureConfig 不可用时回退到下一步 */
+    }
+  }
+
+  // 2. 回退：任意已配置 provider 的首个 Key（中转站通常共用同一套 Key）
+  try {
+    const { providers } = useAPIConfigStore.getState();
+    for (const provider of providers) {
+      const keys = parseApiKeys(provider.apiKey);
+      const fromProvider = tryKey(keys[0]);
+      if (fromProvider) return fromProvider;
+    }
+  } catch {
+    /* store 不可用 */
+  }
+
+  return undefined;
+}
+
+/**
+ * 判断 URL 是否为需要鉴权的视频内容端点（OpenAI 官方视频格式 /v1/videos/{id}/content，
+ * sora/veo 等）。这类地址直接交给主进程下载或 <video src> 都不会带 Authorization。
+ */
+function isProtectedVideoContentUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url) && /\/videos\/[^/]+\/content\/?$/i.test(url);
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('视频转码失败'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * 在渲染进程用 corsFetch（带鉴权头、经统一跨域流程）把受保护媒体地址拉成 data URL。
+ * 与自由生成的处理方式一致：主进程直连 protocol.get 拿不到 Key / 可能被上游域名限制，
+ * 因此对受保护内容端点改在渲染进程下载，再把字节交给主进程落盘。
+ * 拉取失败返回 null，调用方回退到原始 URL。
+ */
+async function fetchProtectedAsDataUrl(url: string, feature?: AIFeature, apiKey?: string): Promise<string | null> {
+  const headers = apiKey
+    ? { Authorization: `Bearer ${apiKey}` }
+    : resolveAuthHeaders(url, feature);
+  if (!headers) return null;
+  try {
+    const resp = await corsFetch(url, { headers });
+    if (!resp.ok) {
+      console.warn(`[ImageStorage] 受保护媒体下载失败 (${resp.status})，回退原始 URL`);
+      return null;
+    }
+    const blob = await resp.blob();
+    return await blobToDataUrl(blob);
+  } catch (err) {
+    console.warn('[ImageStorage] 受保护媒体下载异常，回退原始 URL：', err);
+    return null;
+  }
+}
 
 /**
  * Save an image from URL to local storage
@@ -47,8 +139,9 @@ export async function saveImageToLocal(
   }
 
   try {
-    const result = await window.imageStorage!.saveImage(url, category, filename);
-    
+    const headers = resolveAuthHeaders(url);
+    const result = await window.imageStorage!.saveImage(url, category, filename, headers);
+
     if (result.success && result.localPath) {
       console.log(`Image saved locally: ${result.localPath}`);
       return result.localPath;
@@ -181,11 +274,14 @@ export async function getAbsoluteImagePath(localPath: string): Promise<string | 
  * Save a video from URL to local storage
  * @param url - The URL of the video to save
  * @param filename - Optional filename hint
+ * @param apiKey - Optional API key for protected content endpoints (e.g. /v1/videos/{id}/content).
+ *                 显式传入生成时使用的 Key 最可靠；省略则回退到功能绑定 Key 的反查。
  * @returns Local path (local-image://videos/...) or original URL if not in Electron
  */
 export async function saveVideoToLocal(
-  url: string, 
-  filename: string = 'video.mp4'
+  url: string,
+  filename: string = 'video.mp4',
+  apiKey?: string
 ): Promise<string> {
   // If not in Electron or already local, return as-is
   if (!isElectron() || url.startsWith('local-image://') || url.startsWith('data:')) {
@@ -193,8 +289,21 @@ export async function saveVideoToLocal(
   }
 
   try {
-    const result = await window.imageStorage!.saveImage(url, 'videos', filename);
-    
+    // 受鉴权保护的内容端点（/v1/videos/{id}/content）：主进程直连下载会 401，
+    // 改在渲染进程带 Key 经 corsFetch 拉成 data URL，再交主进程解码落盘。
+    let urlToSave = url;
+    if (isProtectedVideoContentUrl(url)) {
+      const dataUrl = await fetchProtectedAsDataUrl(url, 'video_generation', apiKey);
+      if (dataUrl) {
+        urlToSave = dataUrl;
+      }
+    }
+
+    const headers = urlToSave === url
+      ? (apiKey ? { Authorization: `Bearer ${apiKey}` } : resolveAuthHeaders(url, 'video_generation'))
+      : undefined;
+    const result = await window.imageStorage!.saveImage(urlToSave, 'videos', filename, headers);
+
     if (result.success && result.localPath) {
       console.log(`Video saved locally: ${result.localPath}`);
       return result.localPath;
